@@ -1098,10 +1098,14 @@ int main(int argc, char*argv[])
       if (flag_tmp) disable_concatz_generation = strcmp(flag_tmp,"true")==0;
 
 	/* Parse the input. Make the pform. */
-      int rc = 0;
-      for (unsigned idx = 0; idx < source_files.size(); idx += 1) {
-	    rc += pform_parse(source_files[idx]);
-      }
+	int rc = 0;
+	if (strcmp(source_files[0], "fake") == 0) {
+		rc = pform_fake_parse();
+	} else {
+		for (unsigned idx = 0; idx < source_files.size(); idx += 1) {
+			rc += pform_parse(source_files[idx]);
+		}
+	}
 
       if (pf_path) {
 	    ofstream out (pf_path);

@@ -3788,3 +3788,212 @@ int pform_parse(const char*path)
       destroy_lexor();
       return error_count;
 }
+
+int pform_fake_parse()
+{
+      if (pform_units.empty() || separate_compilation) {
+            char unit_name[20];
+            static unsigned nunits = 0;
+            if (separate_compilation)
+                  sprintf(unit_name, "$unit#%u", ++nunits);
+            else
+                  sprintf(unit_name, "$unit");
+
+            PPackage*unit = new PPackage(lex_strings.make(unit_name), 0);
+            printf("Got unit: %s, \n", unit_name);
+            unit->default_lifetime = LexicalScope::STATIC;
+            unit->set_file(filename_strings.make("fake_path"));
+            unit->set_lineno(1);
+            pform_units.push_back(unit);
+
+            pform_cur_module.clear();
+            pform_cur_generate = 0;
+            pform_cur_modport = 0;
+
+            pform_set_timescale(def_ts_units, def_ts_prec, 0, 0);
+
+            allow_timeunit_decl = true;
+            allow_timeprec_decl = true;
+
+            lexical_scope = unit;
+      }
+
+      error_count = 0;
+      warn_count = 0;
+
+      /* now do the magic by hand */
+      struct vlltype loc {
+            .first_line = 0,
+            .first_column = 0,
+            .last_line = 0,
+            .last_column = 0,
+            .text = "fake_file",
+      };
+
+      reset_lexor();
+
+      /* Set timescale first */
+      pform_set_scope_timescale(loc);
+
+      /* Start creating the top module */
+      {
+            pform_startmodule(loc, "top", false, false, LexicalScope::INHERITED, NULL);
+      }
+
+      /* Create the ports */
+      {
+            /* The pointer to our ports is freed internally, so create an extra
+             * pointer which can be freed safely */
+            vector<Module::port_t*> *ports = new vector<Module::port_t*>();
+
+            /* Port C */
+            {
+                  pform_module_port_reference(perm_string::literal("c"), "fake_file", 0);
+                  pform_module_define_port(loc, perm_string::literal("c"),
+                                           NetNet::PortType::PINPUT,
+                                           NetNet::Type::IMPLICIT,
+                                           NULL, NULL, false);
+
+                  Module::port_t *port_c = new Module::port_t();
+                  port_c->name = perm_string::literal("c");
+                  PEIdent *port_c_expr = new PEIdent(perm_string::literal("c"), false);
+                  port_c->expr.push_back(port_c_expr);
+
+                  ports->push_back(port_c);
+            }
+
+            /* Port D */
+            {
+                  pform_module_port_reference(perm_string::literal("d"), "fake_file", 0);
+                  pform_module_define_port(loc, perm_string::literal("d"),
+                                           NetNet::PortType::PINPUT,
+                                           NetNet::Type::IMPLICIT,
+                                           NULL, NULL, false);
+
+                  Module::port_t *port_d = new Module::port_t();
+                  port_d->name = perm_string::literal("d");
+                  PEIdent *port_d_expr = new PEIdent(perm_string::literal("d"), false);
+                  port_d->expr.push_back(port_d_expr);
+
+                  ports->push_back(port_d);
+            }
+
+            /* Port Q */
+            {
+                  pform_module_port_reference(perm_string::literal("q"), "fake_file", 0);
+                  pform_module_define_port(loc, perm_string::literal("q"),
+                                           NetNet::PortType::POUTPUT,
+                                           NetNet::Type::IMPLICIT,
+                                           NULL, NULL, false);
+
+                  Module::port_t *port_q = new Module::port_t();
+                  port_q->name = perm_string::literal("q");
+                  PEIdent *port_q_expr = new PEIdent(perm_string::literal("q"), false);
+                  port_q->expr.push_back(port_q_expr);
+
+                  ports->push_back(port_q);
+            }
+
+            pform_module_set_ports(ports);
+      }
+
+      /* Create registers/wires */
+      {
+            /* Reg T */
+            pform_makewire(loc, perm_string::literal("t"),
+                           NetNet::Type::REG,
+                           NetNet::PortType::NOT_A_PORT,
+                           IVL_VT_NO_TYPE,
+                           NULL);
+            pform_set_reg_idx(perm_string::literal("t"), NULL);
+            PExpr *wire_t_pexpr = new PENumber(new verinum(verinum::V0, 1, true));
+            pform_make_var_init(loc, perm_string::literal("t"), wire_t_pexpr);
+
+            list<perm_string> *reg_t_names = new list<perm_string>();
+            reg_t_names->push_back(perm_string::literal("t"));
+            data_type_t *reg_t_d_type = new vector_type_t(IVL_VT_LOGIC, false, 0);
+            pform_set_data_type(loc,
+                                reg_t_d_type,
+                                reg_t_names,
+                                NetNet::Type::REG,
+                                NULL);
+      }
+
+      /* Create the always statement for the DFF */
+      {
+            /* Clock event pointer */
+            PEventStatement *clk_s;
+
+            {
+                  pform_name_t clk_n;
+                  clk_n.push_back(name_component_t(lex_strings.make(perm_string::literal("c"))));
+                  PEIdent *clk_i = pform_new_ident(loc, clk_n);
+
+                  PEEvent *clk_e = new PEEvent(PEEvent::POSEDGE, clk_i);
+
+                  svector<PEEvent*> clk_e_v(1);
+                  clk_e_v[0] = clk_e;
+                  clk_s = new PEventStatement(clk_e_v);
+            }
+
+            /* Prepare the DFF assignment */
+            {
+                  pform_name_t dff_t_n;
+                  dff_t_n.push_back(name_component_t(lex_strings.make(perm_string::literal("t"))));
+                  PEIdent *dff_t_i = pform_new_ident(loc, dff_t_n);
+
+                  pform_name_t dff_d_n;
+                  dff_d_n.push_back(name_component_t(lex_strings.make(perm_string::literal("d"))));
+                  PEIdent *dff_d_i = pform_new_ident(loc, dff_d_n);
+
+                  PAssignNB *dff = new PAssignNB(dff_t_i, dff_d_i);
+
+                  clk_s->set_statement(dff);
+            }
+
+
+            /* XXX this doesn't do anything as the second argument is null, but call
+             * this to make the log more like the original one */
+            {
+                  map<perm_string,PExpr*> nil_attr_map;
+                  pform_bind_attributes(nil_attr_map, NULL, false);
+            }
+
+
+            /* Now create the actual always behavior */
+            {
+                  PProcess *tmpp = pform_make_behavior(IVL_PR_ALWAYS, clk_s, NULL);
+                  (void)tmpp;
+            }
+      }
+
+      /* Assign T to Q */
+      {
+            list<PExpr*>*alist = new list<PExpr*>();
+
+            /* Create new identities for the assignment */
+            pform_name_t ass_q_n;
+            ass_q_n.push_back(name_component_t(lex_strings.make(perm_string::literal("q"))));
+            PEIdent *ass_q_i = pform_new_ident(loc, ass_q_n);
+
+            pform_name_t ass_t_n;
+            ass_t_n.push_back(name_component_t(lex_strings.make(perm_string::literal("t"))));
+            PEIdent *ass_t_i = pform_new_ident(loc, ass_t_n);
+
+            alist->push_back(ass_q_i);
+            alist->push_back(ass_t_i);
+
+            struct str_pair_t d_to_t_str_pair = { IVL_DR_STRONG, IVL_DR_STRONG };
+
+            pform_make_pgassign_list(alist, NULL,
+                                     d_to_t_str_pair,
+                                     "fake_file", 0);
+      }
+
+      /* Finish creating the top module */
+      {
+            pform_endmodule("top", false, Module::UCD_NONE);
+      }
+
+      return 0;
+}
