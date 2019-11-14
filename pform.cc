@@ -3906,7 +3906,11 @@ int pform_fake_parse()
                            IVL_VT_NO_TYPE,
                            NULL);
             pform_set_reg_idx(perm_string::literal("t"), NULL);
+
             PExpr *wire_t_pexpr = new PENumber(new verinum(verinum::V0, 1, true));
+            /* XXX it is possible that pform_verinum_with_size should be used
+             * instead of the above */
+
             pform_make_var_init(loc, perm_string::literal("t"), wire_t_pexpr);
 
             list<perm_string> *reg_t_names = new list<perm_string>();
@@ -3928,12 +3932,15 @@ int pform_fake_parse()
                   pform_name_t clk_n;
                   clk_n.push_back(name_component_t(lex_strings.make(perm_string::literal("c"))));
                   PEIdent *clk_i = pform_new_ident(loc, clk_n);
+                  FILE_NAME(clk_i, loc);
 
                   PEEvent *clk_e = new PEEvent(PEEvent::POSEDGE, clk_i);
+                  FILE_NAME(clk_e, loc);
 
                   svector<PEEvent*> clk_e_v(1);
                   clk_e_v[0] = clk_e;
                   clk_s = new PEventStatement(clk_e_v);
+                  FILE_NAME(clk_s, loc);
             }
 
             /* Prepare the DFF assignment */
@@ -3941,12 +3948,15 @@ int pform_fake_parse()
                   pform_name_t dff_t_n;
                   dff_t_n.push_back(name_component_t(lex_strings.make(perm_string::literal("t"))));
                   PEIdent *dff_t_i = pform_new_ident(loc, dff_t_n);
+                  FILE_NAME(dff_t_i, loc);
 
                   pform_name_t dff_d_n;
                   dff_d_n.push_back(name_component_t(lex_strings.make(perm_string::literal("d"))));
                   PEIdent *dff_d_i = pform_new_ident(loc, dff_d_n);
+                  FILE_NAME(dff_d_i, loc);
 
                   PAssignNB *dff = new PAssignNB(dff_t_i, dff_d_i);
+                  FILE_NAME(dff, loc);
 
                   clk_s->set_statement(dff);
             }
@@ -3963,7 +3973,7 @@ int pform_fake_parse()
             /* Now create the actual always behavior */
             {
                   PProcess *tmpp = pform_make_behavior(IVL_PR_ALWAYS, clk_s, NULL);
-                  (void)tmpp;
+                  FILE_NAME(tmpp, loc);
             }
       }
 
@@ -3975,10 +3985,12 @@ int pform_fake_parse()
             pform_name_t ass_q_n;
             ass_q_n.push_back(name_component_t(lex_strings.make(perm_string::literal("q"))));
             PEIdent *ass_q_i = pform_new_ident(loc, ass_q_n);
+            FILE_NAME(ass_q_i, loc);
 
             pform_name_t ass_t_n;
             ass_t_n.push_back(name_component_t(lex_strings.make(perm_string::literal("t"))));
             PEIdent *ass_t_i = pform_new_ident(loc, ass_t_n);
+            FILE_NAME(ass_t_i, loc);
 
             alist->push_back(ass_q_i);
             alist->push_back(ass_t_i);
