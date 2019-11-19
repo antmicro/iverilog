@@ -41,9 +41,12 @@
 # include  <cstring>
 # include  <cstdlib>
 # include  <cctype>
+# include  <fstream>
 
 # include  "ivl_assert.h"
 # include  "ivl_alloc.h"
+
+# include "json.hpp" // nlohmann
 
 /*
  * The "// synthesis translate_on/off" meta-comments cause this flag
@@ -4006,6 +4009,374 @@ int pform_fake_parse()
       {
             pform_endmodule("top", false, Module::UCD_NONE);
       }
+
+      return 0;
+}
+
+static struct vlltype json_fake_loc {
+    .first_line = 0,
+    .first_column = 0,
+    .last_line = 0,
+    .last_column = 0,
+    .text = "json_file",
+};
+
+static vector<Module::port_t*> *json_ports;
+
+static std::string get_json_name(nlohmann::json &json) {
+        std::string name = json.find("name").value();
+
+        name.erase(std::remove(name.begin(), name.end(), '\"'), name.end());
+
+        return name;
+}
+
+static void pform_json_parse_node_always(nlohmann::json &json, nlohmann::json &event)
+{
+    std::string type = json.find("type").value();
+
+    std::cout << "GOT JSON (ALWAYS) NODE TYPE:"  << type << std::endl;
+
+    if (type == "AST_ALWAYS") {
+        /* Find the event node first, and then iterate over the remaining
+         * ones with that node found
+         */
+        auto nodes = json.find("nodes");
+        auto itr = nodes->begin();
+
+        auto event_node = itr.value();
+
+        itr++;
+
+        for (; itr != nodes->end(); ++itr) {
+            pform_json_parse_node_always(itr.value(), event_node);
+        }
+    } else if (type == "AST_BLOCK") {
+        /* FIXME ignoring the block - this is ok if there is just one statement
+         * in a block - it is PROBABLY broken if there are more
+         */
+
+        auto nodes = json.find("nodes");
+
+        for (auto itr = nodes->begin() ; itr != nodes->end() ; ++itr) {
+            pform_json_parse_node_always(itr.value(), event);
+        }
+    } else if (type == "AST_ASSIGN_LE") {
+        /* Clock event pointer */
+        PEventStatement *clk_s;
+
+        {
+            auto event_nodes = event.find("nodes");
+            assert(event_nodes.value().size() == 1);
+
+            auto itr = event_nodes->begin();
+
+            pform_name_t clk_n;
+            clk_n.push_back(name_component_t(lex_strings.make(get_json_name(itr.value()))));
+            PEIdent *clk_i = pform_new_ident(json_fake_loc, clk_n);
+            FILE_NAME(clk_i, json_fake_loc);
+
+            PEEvent::edge_t event_edge = PEEvent::ANYEDGE;
+
+            std::string event_type = event.find("type").value();
+            if (event_type == "AST_ANYEDGE") {
+                event_edge = PEEvent::ANYEDGE;
+            } else if (event_type == "AST_POSEDGE") {
+                event_edge = PEEvent::POSEDGE;
+            } else if (event_type == "AST_NEGEDGE") {
+                event_edge = PEEvent::NEGEDGE;
+            } else if (event_type == "AST_POSITIVE") {
+                event_edge = PEEvent::POSITIVE;
+            } else {
+                /* TODO assert */
+            }
+
+            PEEvent *clk_e = new PEEvent(event_edge, clk_i);
+
+            FILE_NAME(clk_e, json_fake_loc);
+
+            /* The argument is the size of the svector */
+            svector<PEEvent*> clk_e_v(1);
+            clk_e_v[0] = clk_e;
+            clk_s = new PEventStatement(clk_e_v);
+            FILE_NAME(clk_s, json_fake_loc);
+        }
+
+        {
+            /* code in this block is almost identical to the regular AST_ASSIGN_LE block */
+            auto nodes = json.find("nodes");
+            assert(nodes.value().size() == 2);
+
+            PEIdent *lval, *rval;
+            pform_name_t lval_name, rval_name;
+
+            auto itr = nodes->begin();
+
+            lval_name.push_back(name_component_t(lex_strings.make(get_json_name(itr.value()))));
+            itr++;
+            rval_name.push_back(name_component_t(lex_strings.make(get_json_name(itr.value()))));
+
+            lval = pform_new_ident(json_fake_loc, lval_name);
+            rval = pform_new_ident(json_fake_loc, rval_name);
+
+            FILE_NAME(lval, json_fake_loc);
+            FILE_NAME(rval, json_fake_loc);
+
+            /* Here is where the differences start */
+
+            PAssignNB *dff = new PAssignNB(lval, rval);
+            FILE_NAME(dff, json_fake_loc);
+
+            clk_s->set_statement(dff);
+        }
+
+        /* Now create the actual always behavior */
+        {
+            PProcess *tmpp = pform_make_behavior(IVL_PR_ALWAYS, clk_s, NULL);
+            FILE_NAME(tmpp, json_fake_loc);
+        }
+    } else {
+        std::cout << "Unhandled " << type << " node!" << std::endl;
+    }
+}
+
+static void pform_json_parse_node_initial(nlohmann::json &json)
+{
+    std::string type = json.find("type").value();
+
+    std::cout << "GOT JSON (INITIAL) NODE TYPE:"  << type << std::endl;
+
+    if (type == "AST_INITIAL") {
+        /* Just iterate over all internal nodes here */
+        auto nodes = json.find("nodes");
+
+        for (auto itr = nodes->begin() ; itr != nodes->end() ; ++itr) {
+            pform_json_parse_node_initial(itr.value());
+        }
+    } else if (type == "AST_BLOCK") {
+        /* FIXME ignoring the block - this is ok if there is just one statement
+         * in a block - it is PROBABLY broken if there are more
+         */
+
+        auto nodes = json.find("nodes");
+
+        for (auto itr = nodes->begin() ; itr != nodes->end() ; ++itr) {
+            pform_json_parse_node_initial(itr.value());
+        }
+    } else if ( (type == "AST_ASSIGN") || (type == "AST_ASSIGN_LE") ) {
+        /* FIXME - assume we are always assigning a constant to an identifier
+         * for now
+         */
+        auto nodes = json.find("nodes");
+
+        /* Take the first node, make sure it is an identifier */
+        auto itr = nodes->begin();
+
+        assert((*itr).find("type").value() == "AST_IDENTIFIER");
+        perm_string pname = lex_strings.make(get_json_name(*itr));
+
+        /* Switch to the next node, make sure it is a constant */
+        itr++;
+        assert((*itr).find("type").value() == "AST_CONSTANT");
+
+        auto wire_width = (*itr).find("width").value();
+        auto wire_value = (*itr).find("value").value();
+
+        /* XXX default value */
+        verinum::V wire_verinum_value = verinum::Vx;
+
+        if (wire_value == 0) {
+            wire_verinum_value = verinum::V0;
+        } else if (wire_value == 1) {
+            wire_verinum_value = verinum::V1;
+        } else {
+            /* TODO assert */
+        }
+
+        PExpr *wire_pexpr = new PENumber(new verinum(wire_verinum_value,
+                                                     wire_width,
+                                                     true));
+
+        pform_make_var_init(json_fake_loc, pname, wire_pexpr);
+
+        /* Should this be here, as a part of assignment, or should it be part
+         * of the definition of the port that happened earlier?
+         * Icarus does the assignment first by default, so let's keep it here
+         * for now.
+         */
+        list<perm_string> *reg_names = new list<perm_string>();
+        reg_names->push_back(pname);
+
+        data_type_t *reg_d_type = new vector_type_t(IVL_VT_LOGIC, false, 0);
+        pform_set_data_type(json_fake_loc,
+                            reg_d_type,
+                            reg_names,
+                            NetNet::Type::REG,
+                            NULL);
+    } else {
+        std::cout << "Unhandled " << type << " node!" << std::endl;
+    }
+}
+
+static void pform_json_parse_node(nlohmann::json &json)
+{
+    std::string type = json.find("type").value();
+
+    std::cout << "GOT JSON NODE TYPE:"  << type << std::endl;
+
+    if (type == "AST_MODULE") {
+        auto name = json.find("name").value();
+        std::cout << "NAME IS: " << get_json_name(json).c_str() << std::endl;
+
+        pform_startmodule(json_fake_loc, get_json_name(json).c_str(), false, false,
+                          LexicalScope::INHERITED, NULL);
+        json_ports = new vector<Module::port_t*>();
+
+        auto nodes = json.find("nodes");
+        for (auto itr = nodes->begin() ; itr != nodes->end() ; ++itr) {
+            pform_json_parse_node(itr.value());
+        }
+
+        pform_module_set_ports(json_ports);
+        pform_endmodule(get_json_name(json).c_str(), false, Module::UCD_NONE);
+
+    } else if (type == "AST_WIRE") {
+        auto name = json.find("name").value();
+        auto port = json.find("port");
+
+        std::cout << "NAME IS: " << get_json_name(json).c_str() << std::endl;
+
+        if (json.find("reg") != json.end()) {
+            perm_string pname = lex_strings.make(get_json_name(json));
+
+            pform_makewire(json_fake_loc,
+                           pname,
+                           NetNet::Type::REG,
+                           NetNet::PortType::NOT_A_PORT,
+                           IVL_VT_NO_TYPE,
+                           NULL);
+
+            pform_set_reg_idx(pname, NULL);
+
+        } else if (port != json.end()) {
+            perm_string pname = lex_strings.make(get_json_name(json));
+
+            pform_module_port_reference(pname, "json_file", 0);
+
+            auto direction = port.value();
+
+            std::cout << "Got port : " << get_json_name(json) << std::endl;
+
+            if (direction == "input") {
+                pform_module_define_port(json_fake_loc,
+                                         pname,
+                                        NetNet::PortType::PINPUT,
+                                        NetNet::Type::IMPLICIT,
+                                        NULL, NULL, false);
+            } else if (direction == "output") {
+                pform_module_define_port(json_fake_loc,
+                                        pname,
+                                        NetNet::PortType::POUTPUT,
+                                        NetNet::Type::IMPLICIT,
+                                        NULL, NULL, false);
+            } else {
+                printf("port N/A %s @ %d\n", __func__, __LINE__);
+                /* TODO assert */
+            }
+
+            Module::port_t *port_d = new Module::port_t();
+            port_d->name = pname;
+            PEIdent *port_d_expr = new PEIdent(pname, false);
+            port_d->expr.push_back(port_d_expr);
+
+            json_ports->push_back(port_d);
+
+        } else {
+            std::cout << "!!! Neither reg nor port" << std::endl;
+            /* TODO assert */
+        }
+    } else if ( (type == "AST_ASSIGN") || (type == "AST_ASSIGN_LE") ) {
+        /* FIXME for now it assumes both lvalue and rvalue are identifiers */
+        auto nodes = json.find("nodes");
+        assert(nodes.value().size() == 2);
+
+        list<PExpr*>*alist = new list<PExpr*>();
+        PEIdent *lval, *rval;
+        pform_name_t lval_name, rval_name;
+
+        auto itr = nodes->begin();
+
+        lval_name.push_back(name_component_t(lex_strings.make(get_json_name(itr.value()))));
+        itr++;
+        rval_name.push_back(name_component_t(lex_strings.make(get_json_name(itr.value()))));
+
+        lval = pform_new_ident(json_fake_loc, lval_name);
+        rval = pform_new_ident(json_fake_loc, rval_name);
+
+        FILE_NAME(lval, json_fake_loc);
+        FILE_NAME(rval, json_fake_loc);
+
+        alist->push_back(lval);
+        alist->push_back(rval);
+
+        struct str_pair_t assign_str_pair = { IVL_DR_STRONG, IVL_DR_STRONG };
+
+        pform_make_pgassign_list(alist, NULL,
+                                 assign_str_pair,
+                                 "fake_file", 0);
+    } else if (type == "AST_INITIAL") {
+        pform_json_parse_node_initial(json);
+    } else if (type == "AST_ALWAYS") {
+        /* XXX the second argument should be null */
+        pform_json_parse_node_always(json, json);
+    } else {
+        std::cout << "Unhandled " << type << " node!" << std::endl;
+    }
+}
+
+int pform_json_parse(const char *path)
+{
+      std::ifstream filein(path);
+      std::stringstream ss;
+      ss << filein.rdbuf();
+      nlohmann::json json = nlohmann::json::parse(ss.str());
+
+      if (pform_units.empty() || separate_compilation) {
+            char unit_name[20];
+            static unsigned nunits = 0;
+            if (separate_compilation)
+                  sprintf(unit_name, "$unit#%u", ++nunits);
+            else
+                  sprintf(unit_name, "$unit");
+
+            PPackage*unit = new PPackage(lex_strings.make(unit_name), 0);
+            printf("Got unit: %s, \n", unit_name);
+            unit->default_lifetime = LexicalScope::STATIC;
+            unit->set_file(filename_strings.make("fake_path"));
+            unit->set_lineno(1);
+            pform_units.push_back(unit);
+
+            pform_cur_module.clear();
+            pform_cur_generate = 0;
+            pform_cur_modport = 0;
+
+            pform_set_timescale(def_ts_units, def_ts_prec, 0, 0);
+
+            allow_timeunit_decl = true;
+            allow_timeprec_decl = true;
+
+            lexical_scope = unit;
+      }
+
+      error_count = 0;
+      warn_count = 0;
+
+      reset_lexor();
+
+      /* Set timescale first */
+      pform_set_scope_timescale(json_fake_loc);
+
+      pform_json_parse_node(json);
 
       return 0;
 }

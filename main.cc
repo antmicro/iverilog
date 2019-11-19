@@ -1101,6 +1101,9 @@ int main(int argc, char*argv[])
 	int rc = 0;
 	if (strcmp(source_files[0], "fake") == 0) {
 		rc = pform_fake_parse();
+	} else if (strcmp(source_files[0], "../ast.json") == 0) {
+	/* Hardcoded json file for now */
+		rc = pform_json_parse(source_files[0]);
 	} else {
 		for (unsigned idx = 0; idx < source_files.size(); idx += 1) {
 			rc += pform_parse(source_files[idx]);

@@ -58,6 +58,7 @@ extern void pform_dump(std::ostream&out, const PTaskFunc*tf);
  */
 extern int pform_parse(const char*path);
 extern int pform_fake_parse();
+extern int pform_json_parse(const char *path);
 
 extern string vl_file;
 
